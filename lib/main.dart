@@ -50,16 +50,23 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
     );
 
     final prompt = '''convert natural language animation descriptions to JSON: 
-      type: The type (fade, rotate,...); 
-      duration: in milliseconds; 
-      curve: The animation curve (linear, easeIn, etc.);
-      properties: Specific properties for the animation. 
+      type: The type (fade/fadeIn, fadeOut, rotate, scale, slide);
+      duration: in milliseconds;
+      curve: The animation curve (linear, easeIn, easeOut, easeInOut, bounceOut, elastic);
+      properties: Specific properties for each type:
+        - fade/fadeIn: beginOpacity (0-1), endOpacity (0-1)
+        - fadeOut: automatically sets beginOpacity=1, endOpacity=0
+        - scale: beginScale (0+), endScale (0+)
+        - slide: beginX (-1 to 1), beginY (-1 to 1), endX (-1 to 1), endY (-1 to 1)
+        - rotate: beginAngle (degrees), endAngle (degrees)
       Response in JSON format only, with array of animations.
       Input: $input''';
 
     try {
       final response = await model.generateContent([Content.text(prompt)]);
-      final content = response.text;
+      final content = response.text?.replaceAll('```json', '').replaceAll("JSON", "")
+                            .replaceAll('```', '')
+                            .trim();
       print('Gemini response: $content');
       
       // Directly return a map with an animations key
@@ -79,10 +86,16 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
     });
 
     try {
-      // First parse the input with AI
+      // Reset the preview widget to initial state
+      setState(() {
+        _previewWidget = Container(
+          width: 100,
+          height: 100,
+          color: Colors.blue,
+        );
+      });
+
       final aiResponse = await _parseAnimationWithAI(input);
-      
-      // Convert the AI response to a string for JSON parsing
       final jsonString = json.encode(aiResponse);
       
       final jsonMatch = RegExp(r'\[[\s\S]*\]').firstMatch(jsonString);
@@ -107,18 +120,25 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
 
         // Chain animations
         double startTime = 0.0;
+        Widget currentWidget = _previewWidget;  // Store the initial widget
+        
         for (var animConfig in animations) {
           double endTime = startTime + (animConfig['duration'] ?? 1000) / totalDuration;
           
           // Create interval for this animation
           final interval = Interval(startTime, endTime);
-          _createAnimation(
-            Map<String, dynamic>.from(animConfig), 
-            interval
+          currentWidget = _createAnimationWidget(  // Store each animation result
+            animConfig,
+            interval,
+            currentWidget,
           );
           
           startTime = endTime;
         }
+
+        setState(() {
+          _previewWidget = currentWidget;  // Set final widget with all animations
+        });
 
         _animationController.forward();
       }
@@ -134,36 +154,50 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
     }
   }
 
-  void _createAnimation(Map<String, dynamic> config, Interval interval) {
+// New method to create animation widget without setState
+  Widget _createAnimationWidget(Map<String, dynamic> config, Interval interval, Widget child) {
     final curve = _getCurve(config['curve']);
     final curvedInterval = CurvedAnimation(
       parent: _animationController,
       curve: Interval(interval.begin, interval.end, curve: curve),
+      reverseCurve: Interval(interval.begin, interval.end, curve: curve),
     );
+
+    Widget _createFadeWidget(Map<String, dynamic> config, Animation<double> curvedInterval, Widget child) {
+      final beginOpacity = config['properties']?['beginOpacity'] ?? 0.0;
+      final endOpacity = config['properties']?['endOpacity'] ?? 1.0;
+      
+      final tween = Tween<double>(
+        begin: beginOpacity,
+        end: endOpacity,
+      );
+
+      return FadeTransition(
+        opacity: tween.animate(curvedInterval),
+        child: child,
+      );
+    }
 
     switch (config['type'].toString().toLowerCase()) {
       case 'fade':
       case 'fadein':
-        _createFadeAnimation(config, curvedInterval);
-        break;
+        return _createFadeWidget(config, curvedInterval, child);
       case 'fadeout':
-        _createFadeAnimation({
+        return _createFadeWidget({
           ...config,
           'properties': {
             'beginOpacity': 1.0,
-            'endOpacity': 0.0,
+            'endOpacity': 0.1,
           }
-        }, curvedInterval);
-        break;
+        }, curvedInterval, child);
       case 'scale':
-        _createScaleAnimation(config, curvedInterval);
-        break;
+        return _createScaleWidget(config, curvedInterval, child);
       case 'slide':
-        _createSlideAnimation(config, curvedInterval);
-        break;
+        return _createSlideWidget(config, curvedInterval, child);
       case 'rotate':
-        _createRotateAnimation(config, curvedInterval);
-        break;
+        return _createRotateWidget(config, curvedInterval, child);
+      default:
+        return child;
     }
   }
 
@@ -184,72 +218,37 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
     }
   }
 
-  void _createFadeAnimation(Map<String, dynamic> config, Animation<double> curvedInterval) {
-    final tween = Tween<double>(
-      begin: config['properties']?['beginOpacity'] ?? 0.0,
-      end: config['properties']?['endOpacity'] ?? 1.0,
-    );
-    setState(() {
-      _previewWidget = FadeTransition(
-        opacity: tween.animate(curvedInterval),
-        child: _previewWidget.runtimeType == SizedBox ? Container(
-          width: 100,
-          height: 100,
-          color: Colors.blue,
-        ) : _previewWidget,
-      );
-    });
-  }
-
-  void _createScaleAnimation(Map<String, dynamic> config, Animation<double> curvedInterval) {
+  Widget _createScaleWidget(Map<String, dynamic> config, Animation<double> curvedInterval, Widget child) {
     final tween = Tween<double>(
       begin: config['properties']?['beginScale'] ?? 0.0,
       end: config['properties']?['endScale'] ?? 1.0,
     );
-    setState(() {
-      _previewWidget = ScaleTransition(
-        scale: tween.animate(curvedInterval),
-        child: _previewWidget.runtimeType == SizedBox ? Container(
-          width: 100,
-          height: 100,
-          color: Colors.blue,
-        ) : _previewWidget,
-      );
-    });
+    return ScaleTransition(
+      scale: tween.animate(curvedInterval),
+      child: child,
+    );
   }
 
-  void _createSlideAnimation(Map<String, dynamic> config, Animation<double> curvedInterval) {
+  Widget _createSlideWidget(Map<String, dynamic> config, Animation<double> curvedInterval, Widget child) {
     final tween = Tween<Offset>(
       begin: Offset(config['properties']?['beginX'] ?? -1.0, config['properties']?['beginY'] ?? 0.0),
       end: Offset(config['properties']?['endX'] ?? 0.0, config['properties']?['endY'] ?? 0.0),
     );
-    setState(() {
-      _previewWidget = SlideTransition(
-        position: tween.animate(curvedInterval),
-        child: _previewWidget.runtimeType == SizedBox ? Container(
-          width: 100,
-          height: 100,
-          color: Colors.blue,
-        ) : _previewWidget,
-      );
-    });
+    return SlideTransition(
+      position: tween.animate(curvedInterval),
+      child: child,
+    );
   }
 
-  void _createRotateAnimation(Map<String, dynamic> config, Animation<double> curvedInterval) {
+  Widget _createRotateWidget(Map<String, dynamic> config, Animation<double> curvedInterval, Widget child) {
     final tween = Tween<double>(
       begin: (config['properties']?['beginAngle'] ?? 0.0) * 3.14159 / 180,
       end: (config['properties']?['endAngle'] ?? 360.0) * 3.14159 / 180,
     );
-    setState(() {
-      _previewWidget = RotationTransition(
-        turns: tween.animate(curvedInterval),
-        child: _previewWidget.runtimeType == SizedBox ? Container(
-          width: 100,
-          height: 100,
-          color: Colors.blue,
-        ) : _previewWidget,
-      );
-    });
+    return RotationTransition(
+      turns: tween.animate(curvedInterval),
+      child: child,
+    );
   }
 
   @override
