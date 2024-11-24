@@ -223,9 +223,21 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
       begin: config['properties']?['beginScale'] ?? 0.0,
       end: config['properties']?['endScale'] ?? 1.0,
     );
-    return ScaleTransition(
-      scale: tween.animate(curvedInterval),
-      child: child,
+
+    final delay = config['properties']?['delay'] ?? 0;
+
+    return FutureBuilder(
+      future: Future.delayed(Duration(milliseconds: delay)),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          return ScaleTransition(
+            scale: tween.animate(curvedInterval),
+            child: child,
+          );
+        } else {
+          return Container(); // or any placeholder widget
+        }
+      },
     );
   }
 
@@ -234,9 +246,21 @@ class _AnimationPreviewPageState extends State<AnimationPreviewPage> with Ticker
       begin: Offset(config['properties']?['beginX'] ?? -1.0, config['properties']?['beginY'] ?? 0.0),
       end: Offset(config['properties']?['endX'] ?? 0.0, config['properties']?['endY'] ?? 0.0),
     );
-    return SlideTransition(
-      position: tween.animate(curvedInterval),
-      child: child,
+
+    final delay = config['properties']?['delay'] ?? 0;
+
+    return FutureBuilder(
+      future: Future.delayed(Duration(milliseconds: delay)),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          return SlideTransition(
+            position: tween.animate(curvedInterval),
+            child: child,
+          );
+        } else {
+          return Container(); // or any placeholder widget
+        }
+      },
     );
   }
 
